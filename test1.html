@@ -3,18 +3,92 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GeoGuessr Clone</title>
+<title>GeoGuessr Demo</title>
 
 <style>
-html,body{
-    margin:0;
-    height:100%;
-    font-family:Arial,sans-serif;
+:root{
+    --bg:#0b1220;
+    --panel:rgba(255,255,255,0.06);
+    --border:rgba(255,255,255,0.1);
+    --text:#e5e7eb;
+    --accent:#3b82f6;
 }
 
-#game{
-    display:flex;
+*{
+    box-sizing:border-box;
+    margin:0;
+    padding:0;
+    font-family:system-ui,Arial;
+}
+
+body{
+    background:var(--bg);
+    color:var(--text);
     height:100vh;
+    overflow:hidden;
+}
+
+/* START SCREEN */
+#startScreen{
+    position:fixed;
+    inset:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:radial-gradient(circle at top, #1e293b, #0b1220);
+}
+
+.card{
+    width:420px;
+    padding:24px;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:18px;
+    backdrop-filter:blur(12px);
+}
+
+.card h1{
+    margin-bottom:10px;
+    font-size:22px;
+}
+
+.card p{
+    opacity:.7;
+    font-size:13px;
+    margin-bottom:12px;
+}
+
+input{
+    width:100%;
+    padding:12px;
+    margin-top:10px;
+    border-radius:12px;
+    border:1px solid var(--border);
+    background:rgba(0,0,0,0.2);
+    color:white;
+}
+
+button{
+    width:100%;
+    padding:12px;
+    margin-top:12px;
+    border:none;
+    border-radius:12px;
+    background:var(--accent);
+    color:white;
+    font-weight:600;
+    cursor:pointer;
+}
+
+button:hover{
+    filter:brightness(1.1);
+}
+
+/* GAME */
+#game{
+    display:none;
+    height:100vh;
+    width:100%;
 }
 
 #streetview{
@@ -27,269 +101,206 @@ html,body{
     height:100%;
 }
 
-#ui{
+/* HUD */
+#hud{
     position:absolute;
-    top:10px;
-    left:10px;
-    z-index:1000;
-    background:white;
-    padding:12px;
-    border-radius:10px;
-    box-shadow:0 2px 10px rgba(0,0,0,.3);
+    top:16px;
+    left:16px;
+    z-index:10;
+    background:var(--panel);
+    border:1px solid var(--border);
+    backdrop-filter:blur(12px);
+    padding:14px;
+    border-radius:14px;
+    width:240px;
 }
 
-button{
-    padding:8px 14px;
-    cursor:pointer;
+.stat{
+    margin-bottom:8px;
+    font-size:14px;
 }
 
 #result{
     margin-top:10px;
-    font-size:14px;
-}
-
-#score{
-    font-weight:bold;
+    font-size:13px;
+    opacity:.9;
 }
 </style>
 </head>
+
 <body>
 
-<div id="ui">
-    <div>Ronde: <span id="round">1</span>/5</div>
-    <div id="score">Score: 0</div>
-    <br>
-    <button id="guessBtn" disabled>
-        Bevestig gok
-    </button>
-    <div id="result"></div>
+<!-- START -->
+<div id="startScreen">
+  <div class="card">
+    <h1>GeoGuessr Demo</h1>
+    <p>Voer je Google Maps API key + locatie in (adres of Maps URL)</p>
+
+    <input id="apiKey" placeholder="API key">
+    <input id="locationInput" placeholder="Adres of Google Maps link">
+
+    <button onclick="startGame()">Start spel</button>
+  </div>
 </div>
 
+<!-- HUD -->
+<div id="hud">
+  <div class="stat">Score: <span id="score">0</span></div>
+  <div class="stat">Ronde: <span id="round">1</span>/1</div>
+  <button onclick="submitGuess()">Bevestig gok</button>
+  <div id="result"></div>
+</div>
+
+<!-- GAME -->
 <div id="game">
-    <div id="streetview"></div>
-    <div id="map"></div>
+  <div id="streetview"></div>
+  <div id="map"></div>
 </div>
 
 <script>
 
 let map;
 let panorama;
+let guessMarker;
+let actualMarker;
+let line;
 
-let guessMarker = null;
-let realMarker = null;
-let line = null;
+let guessPos;
+let actualPos;
 
-let currentRound = 0;
-let totalScore = 0;
+let score = 0;
 
-let guessPosition = null;
-let actualLocation = null;
+function startGame(){
 
-const maxRounds = 5;
+    const key = document.getElementById("apiKey").value.trim();
+    const input = document.getElementById("locationInput").value.trim();
 
-/*
-Eigen locaties.
-Voeg hier onbeperkt locaties toe.
-*/
-
-const locations = [
-
-{lat:52.373169,lng:4.891064},     // Amsterdam
-{lat:48.858370,lng:2.294481},     // Eiffel Tower
-{lat:40.758000,lng:-73.985500},   // Times Square
-{lat:35.658580,lng:139.745433},   // Tokyo Tower
-{lat:-33.856784,lng:151.215297},  // Sydney Opera
-{lat:51.500729,lng:-0.124625},    // Big Ben
-{lat:41.890210,lng:12.492231},    // Colosseum
-{lat:52.516275,lng:13.377704},    // Brandenburg Gate
-{lat:37.819928,lng:-122.478255},  // Golden Gate
-{lat:27.175015,lng:78.042155}     // Taj Mahal
-
-];
-
-function initMap(){
-
-    map = new google.maps.Map(
-        document.getElementById("map"),
-        {
-            center:{lat:20,lng:0},
-            zoom:2,
-            streetViewControl:false
-        }
-    );
-
-    panorama = new google.maps.StreetViewPanorama(
-        document.getElementById("streetview"),
-        {
-            pov:{
-                heading:0,
-                pitch:0
-            }
-        }
-    );
-
-    map.addListener("click",(e)=>{
-
-        guessPosition = e.latLng;
-
-        if(guessMarker){
-            guessMarker.setMap(null);
-        }
-
-        guessMarker = new google.maps.Marker({
-            position:e.latLng,
-            map:map,
-            label:"?"
-        });
-
-        document.getElementById("guessBtn").disabled=false;
-    });
-
-    document
-        .getElementById("guessBtn")
-        .addEventListener("click",submitGuess);
-
-    startRound();
-}
-
-function startRound(){
-
-    clearRound();
-
-    currentRound++;
-
-    if(currentRound>maxRounds){
-
-        alert(
-            "Spel afgelopen!\n\nTotale score: "
-            + totalScore
-        );
-
-        location.reload();
+    if(!key || !input){
+        alert("Vul API key en locatie in");
         return;
     }
 
-    document.getElementById("round").textContent=currentRound;
+    // load google maps script
+    const script = document.createElement("script");
+    script.src =
+      `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=geometry&callback=initMap`;
+    script.async = true;
+    script.defer = true;
+    document.body.appendChild(script);
 
-    const random =
-        locations[
-            Math.floor(
-                Math.random()*locations.length
-            )
-        ];
+    window._locationInput = input;
 
-    actualLocation=random;
+    document.getElementById("startScreen").style.display = "none";
+    document.getElementById("game").style.display = "flex";
+}
 
-    panorama.setPosition(random);
+function parseLocation(input){
 
-    panorama.setPov({
-        heading:Math.random()*360,
-        pitch:0
-    });
+    // Google Maps URL
+    const match = input.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+    if(match){
+        return {
+            lat: parseFloat(match[1]),
+            lng: parseFloat(match[2])
+        };
+    }
 
-    guessPosition=null;
+    // fallback: geocode via Google
+    return input;
+}
 
-    document.getElementById("guessBtn").disabled=true;
+function initMap(){
 
-    document.getElementById("result").innerHTML="";
+    const input = parseLocation(window._locationInput);
+
+    const geocoder = new google.maps.Geocoder();
+
+    const setLocation = (lat,lng)=>{
+
+        actualPos = {lat,lng};
+
+        map = new google.maps.Map(document.getElementById("map"),{
+            center:actualPos,
+            zoom:2,
+            streetViewControl:false
+        });
+
+        panorama = new google.maps.StreetViewPanorama(
+            document.getElementById("streetview"),
+            {
+                position:actualPos,
+                pov:{heading:0,pitch:0}
+            }
+        );
+
+        map.addListener("click",(e)=>{
+
+            guessPos = e.latLng;
+
+            if(guessMarker) guessMarker.setMap(null);
+
+            guessMarker = new google.maps.Marker({
+                position:e.latLng,
+                map:map
+            });
+        });
+    };
+
+    if(typeof input === "string"){
+
+        geocoder.geocode({address:input},(res,status)=>{
+
+            if(status==="OK"){
+                const loc = res[0].geometry.location;
+                setLocation(loc.lat(),loc.lng());
+            }else{
+                alert("Locatie niet gevonden");
+            }
+        });
+
+    } else {
+        setLocation(input.lat,input.lng);
+    }
 }
 
 function submitGuess(){
 
-    if(!guessPosition) return;
-
-    const actual =
-        new google.maps.LatLng(
-            actualLocation.lat,
-            actualLocation.lng
-        );
+    if(!guessPos || !actualPos) return;
 
     const distance =
-        google.maps.geometry.spherical
-        .computeDistanceBetween(
-            guessPosition,
-            actual
+        google.maps.geometry.spherical.computeDistanceBetween(
+            guessPos,
+            new google.maps.LatLng(actualPos.lat,actualPos.lng)
         );
 
     const km = distance/1000;
 
-    let roundScore =
-        Math.max(
-            0,
-            Math.round(
-                5000 - km*2
-            )
-        );
+    const roundScore = Math.max(0, Math.round(5000 - km*2));
 
-    totalScore += roundScore;
+    score += roundScore;
 
-    document.getElementById("score")
-        .textContent =
-        "Score: " + totalScore;
+    document.getElementById("score").innerText = score;
 
-    realMarker =
-        new google.maps.Marker({
-            position:actual,
-            map:map,
-            label:"✓"
-        });
+    actualMarker = new google.maps.Marker({
+        position:actualPos,
+        map:map,
+        label:"X"
+    });
 
-    line =
-        new google.maps.Polyline({
-            map:map,
-            path:[
-                guessPosition,
-                actual
-            ]
-        });
+    line = new google.maps.Polyline({
+        map:map,
+        path:[guessPos,{lat:actualPos.lat,lng:actualPos.lng}]
+    });
 
-    const bounds =
-        new google.maps.LatLngBounds();
+    map.fitBounds(new google.maps.LatLngBounds(
+        guessPos,
+        actualPos
+    ));
 
-    bounds.extend(guessPosition);
-    bounds.extend(actual);
-
-    map.fitBounds(bounds);
-
-    document.getElementById("result")
-        .innerHTML =
-        `
-        Afstand:
-        ${km.toFixed(1)} km
-        <br>
-        Punten:
-        ${roundScore}
-        <br><br>
-        <button onclick="startRound()">
-            Volgende ronde
-        </button>
-        `;
+    document.getElementById("result").innerHTML =
+        `Afstand: ${km.toFixed(1)} km<br>Score: ${roundScore}`;
 }
 
-function clearRound(){
-
-    if(guessMarker){
-        guessMarker.setMap(null);
-        guessMarker=null;
-    }
-
-    if(realMarker){
-        realMarker.setMap(null);
-        realMarker=null;
-    }
-
-    if(line){
-        line.setMap(null);
-        line=null;
-    }
-}
-
-</script>
-
-<script
-async
-defer
-src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDw3TS6An6KIbA_VOGQmug-1NTuHdwdQvY&libraries=geometry&callback=initMap">
 </script>
 
 </body>
